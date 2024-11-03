@@ -38,7 +38,7 @@ func (w *Worker) Stop() {
 	close(w.stopChan)
 }
 
-type Manager struct {
+type WorkerPool struct {
 	workers     map[int32]*Worker
 	taskQueue   chan string
 	stopChan    chan struct{}
@@ -49,8 +49,8 @@ type Manager struct {
 	wg          sync.WaitGroup
 }
 
-func NewManager(minWorkers, maxWorkers int) *Manager {
-	return &Manager{
+func NewWorkerPool(minWorkers, maxWorkers int) *WorkerPool {
+	return &WorkerPool{
 		workers:    make(map[int32]*Worker),
 		taskQueue:  make(chan string, 100),
 		stopChan:   make(chan struct{}),
@@ -60,59 +60,59 @@ func NewManager(minWorkers, maxWorkers int) *Manager {
 }
 
 // запускаем воркер пул
-func (m *Manager) Start() {
-	for i := 0; i < m.minWorkers; i++ {
-		m.addWorker()
+func (wp *WorkerPool) Start() {
+	for i := 0; i < wp.minWorkers; i++ {
+		wp.addWorker()
 	}
-	go m.manage()
+	go wp.manage()
 }
 
 // добавляем воркера
-func (m *Manager) addWorker() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (wp *WorkerPool) addWorker() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
 
-	if int(m.workerCount) >= m.maxWorkers { // важно: менеджер постоянно пытается добавить воркера, здесь мы не даем ему добавить больше нужного
+	if int(wp.workerCount) >= wp.maxWorkers { // важно: менеджер постоянно пытается добавить воркера, здесь мы не даем ему добавить больше нужного
 		return
 	}
 
 	// Увеличиваем счетчик воркеров
-	workerID := atomic.AddInt32(&m.workerCount, 1)
-	m.wg.Add(1)
+	workerID := atomic.AddInt32(&wp.workerCount, 1)
+	wp.wg.Add(1)
 
 	worker := &Worker{
 		id:       workerID,
-		taskChan: m.taskQueue,
+		taskChan: wp.taskQueue,
 		stopChan: make(chan struct{}),
-		wg:       &m.wg,
+		wg:       &wp.wg,
 	}
 
-	m.workers[workerID] = worker
-	fmt.Printf("Worker %d started, total workers: %d\n", workerID, m.workerCount)
+	wp.workers[workerID] = worker
+	fmt.Printf("Worker %d started, total workers: %d\n", workerID, wp.workerCount)
 	worker.Start()
 }
 
 // удаляем воркера
-func (m *Manager) removeWorker() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (wp *WorkerPool) removeWorker() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
 
-	if int(m.workerCount) <= m.minWorkers { // важно: менеджер постоянно пытается удалить воркера, здесь мы не даем ему удалить больше нужного
+	if int(wp.workerCount) <= wp.minWorkers { // важно: менеджер постоянно пытается удалить воркера, здесь мы не даем ему удалить больше нужного
 		return
 	}
 
-	if worker, exists := m.workers[m.workerCount]; exists { // получаем последнего воркера
+	if worker, exists := wp.workers[wp.workerCount]; exists { // получаем последнего воркера
 		worker.Stop()
-		delete(m.workers, m.workerCount)
+		delete(wp.workers, wp.workerCount)
 	}
 
 	// Уменьшаем счетчик воркеров
-	workerID := atomic.AddInt32(&m.workerCount, -1)
-	fmt.Printf("Worker %d stopped, total workers: %d\n", workerID, m.workerCount)
+	workerID := atomic.AddInt32(&wp.workerCount, -1)
+	fmt.Printf("Worker %d stopped, total workers: %d\n", workerID, wp.workerCount)
 }
 
 // тут самое интересное: менеджер для динамически изменяемого воркер пула
-func (m *Manager) manage() {
+func (wp *WorkerPool) manage() {
 	// будем проверять очередь задач и количество рабочих воркеров раз в какоето время
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -120,26 +120,26 @@ func (m *Manager) manage() {
 	for {
 		select {
 		case <-ticker.C:
-			queueLen := len(m.taskQueue)
-			currentWorkers := int(atomic.LoadInt32(&m.workerCount))
+			queueLen := len(wp.taskQueue)
+			currentWorkers := int(atomic.LoadInt32(&wp.workerCount))
 			// тот случай, когда нам надо увеличить количество воркеров
-			if queueLen > currentWorkers && currentWorkers < m.maxWorkers {
+			if queueLen > currentWorkers && currentWorkers < wp.maxWorkers {
 				additionWorkers := (queueLen - currentWorkers) / 2 // на какое количество увеличиваем
 				for i := 0; i < additionWorkers; i++ {
-					m.addWorker()
+					wp.addWorker()
 					currentWorkers++
 				}
-				fmt.Printf("Increased workers to %d based on queue length %d\n", int(m.workerCount), queueLen)
+				fmt.Printf("Increased workers to %d based on queue length %d\n", int(wp.workerCount), queueLen)
 				// когда надо уменьшить
-			} else if queueLen < currentWorkers && currentWorkers > m.minWorkers {
-				for currentWorkers != m.minWorkers { // удаляем сразу все лишние воркеры
-					m.removeWorker()
+			} else if queueLen < currentWorkers && currentWorkers > wp.minWorkers {
+				for currentWorkers != wp.minWorkers { // удаляем сразу все лишние воркеры
+					wp.removeWorker()
 					currentWorkers--
 				}
-				fmt.Printf("Decreased workers to %d based on queue length %d\n", int(m.workerCount), queueLen)
+				fmt.Printf("Decreased workers to %d based on queue length %d\n", int(wp.workerCount), queueLen)
 			}
-		case <-m.stopChan: // если поступил сигнал об остановки воркер пула
-			for _, worker := range m.workers {
+		case <-wp.stopChan: // если поступил сигнал об остановки воркер пула
+			for _, worker := range wp.workers {
 				worker.Stop()
 			}
 			return
@@ -148,14 +148,14 @@ func (m *Manager) manage() {
 }
 
 // добавляем задачу в очередь
-func (m *Manager) AddTask(task string) {
-	m.taskQueue <- task
+func (wp *WorkerPool) AddTask(task string) {
+	wp.taskQueue <- task
 }
 
 // останавливаем воркер пул
-func (m *Manager) Stop() {
-	close(m.stopChan)
-	m.wg.Wait()
-	close(m.taskQueue)
-	atomic.StoreInt32(&m.workerCount, 0)
+func (wp *WorkerPool) Stop() {
+	close(wp.stopChan)
+	wp.wg.Wait()
+	close(wp.taskQueue)
+	atomic.StoreInt32(&wp.workerCount, 0)
 }
