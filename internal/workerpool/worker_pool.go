@@ -128,19 +128,16 @@ func (m *Manager) manage() {
 
 			if queueLen > currentWorkers && currentWorkers < m.maxWorkers {
 				additionWorkers := (queueLen - currentWorkers) / 2
-				if additionWorkers > m.maxWorkers-currentWorkers {
-					additionWorkers = m.maxWorkers - currentWorkers
-				}
 				for i := 0; i < additionWorkers; i++ {
 					m.addWorker()
-
+					currentWorkers++
 				}
 				fmt.Printf("Increased workers to %d based on queue length %d\n", int(m.workerCount), queueLen)
 
 			} else if queueLen < currentWorkers && currentWorkers > m.minWorkers {
-				removeWorkers := (currentWorkers - queueLen) / 2
-				for i := 0; i < removeWorkers && currentWorkers > m.minWorkers; i++ {
+				for currentWorkers != m.minWorkers {
 					m.removeWorker()
+					currentWorkers--
 				}
 				fmt.Printf("Decreased workers to %d based on queue length %d\n", int(m.workerCount), queueLen)
 			}
