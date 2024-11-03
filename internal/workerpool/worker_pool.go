@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// Структура, представляющая отдельного воркера
 type Worker struct {
 	id       int32
 	taskChan <-chan string
@@ -18,17 +17,17 @@ type Worker struct {
 // Запуск воркера
 func (w *Worker) Start() {
 	go func() {
-		defer w.wg.Done() // Это единственное место для вызова Done() для данного воркера
+		defer w.wg.Done() // важно: Done() вызывается только в этом месте
 		for {
 			select {
 			case task, ok := <-w.taskChan:
-				if !ok {
-					return // Канал задач закрыт, завершаем воркера
+				if !ok { // Канал задач закрыт
+					return
 				}
 				fmt.Printf("Worker %d processing task: %s\n", w.id, task)
-				time.Sleep(1 * time.Second) // Имитация обработки задачи
-			case <-w.stopChan:
-				return // Получен сигнал остановки, завершаем работу воркера
+				time.Sleep(1 * time.Second) // Имитируем какуюлибо работу
+			case <-w.stopChan: // получаем сигнал о закрытиии
+				return
 			}
 		}
 	}()
@@ -39,7 +38,6 @@ func (w *Worker) Stop() {
 	close(w.stopChan)
 }
 
-// Структура Manager для управления пулом воркеров
 type Manager struct {
 	workers     map[int32]*Worker
 	taskQueue   chan string
@@ -51,7 +49,6 @@ type Manager struct {
 	wg          sync.WaitGroup
 }
 
-// Конструктор Manager
 func NewManager(minWorkers, maxWorkers int) *Manager {
 	return &Manager{
 		workers:    make(map[int32]*Worker),
@@ -62,7 +59,7 @@ func NewManager(minWorkers, maxWorkers int) *Manager {
 	}
 }
 
-// Метод запуска воркер-пула
+// запускаем воркер пул
 func (m *Manager) Start() {
 	for i := 0; i < m.minWorkers; i++ {
 		m.addWorker()
@@ -70,18 +67,17 @@ func (m *Manager) Start() {
 	go m.manage()
 }
 
-// Метод добавления нового воркера
+// добавляем воркера
 func (m *Manager) addWorker() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if int(m.workerCount) >= m.maxWorkers {
+	if int(m.workerCount) >= m.maxWorkers { // важно: менеджер постоянно пытается добавить воркера, здесь мы не даем ему добавить больше нужного
 		return
 	}
 
 	// Увеличиваем счетчик воркеров
 	workerID := atomic.AddInt32(&m.workerCount, 1)
-	// Добавляем в WaitGroup
 	m.wg.Add(1)
 
 	worker := &Worker{
@@ -96,27 +92,28 @@ func (m *Manager) addWorker() {
 	worker.Start()
 }
 
-// Метод удаления воркера
+// удаляем воркера
 func (m *Manager) removeWorker() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if int(m.workerCount) <= m.minWorkers {
+	if int(m.workerCount) <= m.minWorkers { // важно: менеджер постоянно пытается удалить воркера, здесь мы не даем ему удалить больше нужного
 		return
+	}
+
+	if worker, exists := m.workers[m.workerCount]; exists { // получаем последнего воркера
+		worker.Stop()
+		delete(m.workers, m.workerCount)
 	}
 
 	// Уменьшаем счетчик воркеров
 	workerID := atomic.AddInt32(&m.workerCount, -1)
-
-	if worker, exists := m.workers[workerID]; exists {
-		worker.Stop()               // Вызываем Stop у воркера
-		delete(m.workers, workerID) // Удаляем воркера из map
-	}
 	fmt.Printf("Worker %d stopped, total workers: %d\n", workerID, m.workerCount)
 }
 
-// Функция автоматического масштабирования воркеров
+// тут самое интересное: менеджер для динамически изменяемого воркер пула
 func (m *Manager) manage() {
+	// будем проверять очередь задач и количество рабочих воркеров раз в какоето время
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -125,23 +122,23 @@ func (m *Manager) manage() {
 		case <-ticker.C:
 			queueLen := len(m.taskQueue)
 			currentWorkers := int(atomic.LoadInt32(&m.workerCount))
-
+			// тот случай, когда нам надо увеличить количество воркеров
 			if queueLen > currentWorkers && currentWorkers < m.maxWorkers {
-				additionWorkers := (queueLen - currentWorkers) / 2
+				additionWorkers := (queueLen - currentWorkers) / 2 // на какое количество увеличиваем
 				for i := 0; i < additionWorkers; i++ {
 					m.addWorker()
 					currentWorkers++
 				}
 				fmt.Printf("Increased workers to %d based on queue length %d\n", int(m.workerCount), queueLen)
-
+				// когда надо уменьшить
 			} else if queueLen < currentWorkers && currentWorkers > m.minWorkers {
-				for currentWorkers != m.minWorkers {
+				for currentWorkers != m.minWorkers { // удаляем сразу все лишние воркеры
 					m.removeWorker()
 					currentWorkers--
 				}
 				fmt.Printf("Decreased workers to %d based on queue length %d\n", int(m.workerCount), queueLen)
 			}
-		case <-m.stopChan:
+		case <-m.stopChan: // если поступил сигнал об остановки воркер пула
 			for _, worker := range m.workers {
 				worker.Stop()
 			}
@@ -150,21 +147,15 @@ func (m *Manager) manage() {
 	}
 }
 
-// Добавление задачи в очередь
+// добавляем задачу в очередь
 func (m *Manager) AddTask(task string) {
 	m.taskQueue <- task
 }
 
-// Останавливает все воркеры и завершает работу
+// останавливаем воркер пул
 func (m *Manager) Stop() {
-	// Сигнализируем всем воркерам остановиться
 	close(m.stopChan)
-
-	// Ожидаем завершения всех воркеров
 	m.wg.Wait()
-
-	// Закрываем очередь задач после завершения всех воркеров
 	close(m.taskQueue)
-
 	atomic.StoreInt32(&m.workerCount, 0)
 }
