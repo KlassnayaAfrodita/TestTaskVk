@@ -45,8 +45,8 @@ type WorkerPool struct {
 	workerCount int32
 	maxWorkers  int
 	minWorkers  int
-	mu          sync.Mutex
-	wg          sync.WaitGroup
+	mu          *sync.Mutex
+	wg          *sync.WaitGroup
 }
 
 func NewWorkerPool(minWorkers, maxWorkers int) *WorkerPool {
@@ -56,6 +56,8 @@ func NewWorkerPool(minWorkers, maxWorkers int) *WorkerPool {
 		stopChan:   make(chan struct{}),
 		minWorkers: minWorkers,
 		maxWorkers: maxWorkers,
+		mu:         &sync.Mutex{},
+		wg:         &sync.WaitGroup{},
 	}
 }
 
@@ -84,7 +86,7 @@ func (wp *WorkerPool) addWorker() {
 		id:       workerID,
 		taskChan: wp.taskQueue,
 		stopChan: make(chan struct{}),
-		wg:       &wp.wg,
+		wg:       wp.wg,
 	}
 
 	wp.workers[workerID] = worker
