@@ -13,10 +13,9 @@ func main() {
 
 	manager.Start()
 
-	// Добавляем задачи с задержкой
 	for i := 0; i < 100; i++ {
 		manager.AddTask(fmt.Sprintf("Task %d", i))
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // имитируем задержки при поступлении задач
 	}
 
 	manager.Stop()
