@@ -26,12 +26,10 @@ func TestMaxWorkers(t *testing.T) {
 	manager := NewManager(2, 5)
 	manager.Start()
 
-	// Добавляем задачи в пул, чтобы вызвать автоматическое увеличение количества воркеров
 	for i := 0; i < 100; i++ {
 		manager.AddTask(fmt.Sprintf("Task %d", i))
 	}
 
-	// Ожидаем, пока количество воркеров не достигнет максимума (5), с таймаутом на случай, если это не происходит
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -59,7 +57,6 @@ func TestAllTasksCompleted(t *testing.T) {
 		manager.AddTask(fmt.Sprintf("Task %d", i))
 	}
 
-	// Даем время на завершение задач
 	time.Sleep(3 * time.Second)
 
 	if len(manager.taskQueue) != 0 {
@@ -71,49 +68,45 @@ func TestAllTasksCompleted(t *testing.T) {
 
 // Тест автоматического уменьшения числа воркеров
 func TestAutoScaleDown(t *testing.T) {
-	manager := NewManager(2, 5) // Настраиваем менеджер с 2-5 воркерами
+	manager := NewManager(2, 5)
 	manager.Start()
 
-	// Добавляем несколько задач, чтобы вызвать авто-масштабирование
 	for i := 0; i < 10; i++ {
 		manager.AddTask(fmt.Sprintf("Task %d", i))
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Ждем некоторое время, чтобы позволить воркерам начать обработку задач
+	// ждем, пока задачи поступят и начнут исполнятся
 	time.Sleep(2 * time.Second)
 
-	// Проверяем количество воркеров
 	initialWorkers := atomic.LoadInt32(&manager.workerCount)
 	if initialWorkers < 2 || initialWorkers > 5 {
 		t.Errorf("Unexpected worker count after scaling up: got %d, want between %d and %d", initialWorkers, 2, 5)
 	}
 
-	// Ждем завершения задач, чтобы проверить авто-скейлдаун
 	time.Sleep(3 * time.Second)
 
-	// Убедимся, что воркеры уменьшились до минимального количества
+	// ждем, пока выполнятся задачи и воркеры удалятся
 	finalWorkers := atomic.LoadInt32(&manager.workerCount)
 	if finalWorkers != 2 {
 		t.Errorf("Expected worker count to scale down to 2, but got %d", finalWorkers)
 	}
 
-	// Остановка менеджера
 	manager.Stop()
 	fmt.Println("TestAutoScaleDown completed")
 }
 
+// Тест на остановку воркер пула
 func TestStopAllWorkers(t *testing.T) {
 	manager := NewManager(2, 5)
 	manager.Start()
 
-	// Добавляем задачи в пул
 	for i := 0; i < 5; i++ {
 		manager.AddTask(fmt.Sprintf("Task %d", i))
 	}
 
-	manager.Stop() // Останавливаем пул воркеров и дожидаемся завершения всех воркеров
-
+	manager.Stop()
+	
 	// Проверяем, что все воркеры остановлены
 	activeWorkers := atomic.LoadInt32(&manager.workerCount)
 	if activeWorkers != 0 {
