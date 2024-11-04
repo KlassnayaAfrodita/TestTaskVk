@@ -103,9 +103,11 @@ func (wp *WorkerPool) removeWorker() {
 		return
 	}
 
-	if worker, exists := wp.workers[wp.workerCount]; exists { // получаем последнего воркера
+	// Находим первого попавшегося воркера для удаления
+	for id, worker := range wp.workers {
 		worker.Stop()
-		delete(wp.workers, wp.workerCount)
+		delete(wp.workers, id)
+		break
 	}
 
 	// Уменьшаем счетчик воркеров
